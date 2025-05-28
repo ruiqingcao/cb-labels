@@ -1,9 +1,10 @@
 import numpy as np
 import scipy.stats as stats
+import scipy.special as special
 
 
 class LCA:
-    def __init__(self, n_components=2, tol=1e-3, max_iter=100, random_state=None):
+    def __init__(self, n_components=2, tol=1e-3, max_iter=100, random_state=42):
         self.n_components = n_components
         self.random_state = random_state
         self.tol = tol
@@ -21,6 +22,9 @@ class LCA:
         # bic estimation
         self.bic = None
 
+        # icl estimation
+        self.icl = None
+
         # verbose level
         self.verbose = 0
 
@@ -29,10 +33,10 @@ class LCA:
         n_rows, n_cols = np.shape(data)
         r_numerator = np.zeros(shape=(n_rows, self.n_components))
         for k in range(self.n_components):
-            r_numerator[:, k] = self.weight[k] * np.prod(stats.bernoulli.pmf(
+            r_numerator[:, k] = np.log(self.weight[k]) + np.sum(stats.bernoulli.logpmf(
                 data, p=self.theta[k]), axis=1)
-        r_denominator = np.sum(r_numerator, axis=1)
-        return r_numerator / np.tile(r_denominator, (self.n_components, 1)).T
+        r_denominator = special.logsumexp(r_numerator, axis=1)        
+        return np.exp(r_numerator - np.tile(r_denominator, (self.n_components, 1)).T)
 
     def _do_e_step(self, data):
 
@@ -93,7 +97,7 @@ class LCA:
             # Check for convergence
             aux = np.zeros(shape=(n_rows, self.n_components))
             for k in range(self.n_components):
-                normal_prob = np.prod(stats.bernoulli.pmf(data, p=self.theta[k]), axis=1)
+                normal_prob = np.exp(np.sum(stats.bernoulli.logpmf(data, p=self.theta[k]), axis=1))
                 aux[:, k] = self.weight[k] * normal_prob
             ll_val = np.sum(np.log(np.sum(aux, axis=1)))
             if np.abs(ll_val - self.ll_[-1]) < self.tol:
@@ -104,6 +108,10 @@ class LCA:
         # calculate bic
         self.bic = np.log(n_rows)*(sum(self.theta.shape)+len(self.weight)) - 2.0*self.ll_[-1]
 
+        # calculate icl
+        safe_r = np.where(self.responsibility > 0, self.responsibility, 1e-12)
+        self.icl = self.bic - 2 * np.sum(safe_r * np.log(safe_r))
+    
     def predict(self, data):
         return np.argmax(self.predict_proba(data), axis=1)
 
